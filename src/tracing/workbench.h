@@ -36,6 +36,8 @@ typedef struct profiler{
 	vector<double> grid_deviation_list;
 	size_t num_pairs = 0;
 	size_t num_meetings = 0;
+
+    double cuda_sort_time = 0;
 }profiler;
 
 typedef struct checking_unit{
@@ -134,14 +136,16 @@ public:
 
     //for space for cuda sort
     __uint128_t *d_keys = NULL;
-    box *d_values = NULL;
+    uint *d_values = NULL;
+    box *d_box_block = NULL;
     uint kv_capacity = 45000000;
     uint kv_2G = 44739243;
     uint kv_count = 0;
 
     //space for MemTable
     __uint128_t **h_keys = NULL;
-    box **h_values = NULL;
+    uint **h_values = NULL;
+    box **h_box_block = NULL;
     uint MemTable_capacity = 5;
     uint MemTable_count = 0;
 

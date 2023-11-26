@@ -213,7 +213,7 @@ void tracer::process(){
 				bench->pro.filter_time += get_time_elapsed(ct,true);
 				bench->reachability();
 				bench->pro.refine_time += get_time_elapsed(ct,true);
-				bench->update_meetings();
+				//bench->update_meetings();
 				bench->pro.meeting_identify_time += get_time_elapsed(ct,true);
 			}else{
 	#ifdef USE_GPU
@@ -221,37 +221,34 @@ void tracer::process(){
 	#endif
 			}
 
-            if(MemTable_count==MemTable_upper_limit){
+            if(bench->MemTable_count==bench->MemTable_capacity){
                 //merge sort
-                SSTable.open(config.DBPath+"SSTable"+to_string(t), ios::out | ios::trunc);
-                uint key_index[MemTable_upper_limit]={0};
-                uint total_key=0;
-                for(int i=0;i<MemTable_upper_limit;i++){
-                    total_key += kv_final[i];
-                }
-                int k = 0;
-
+                ofstream SSTable;
+                SSTable.open("../store/SSTable"+to_string(t), ios::out | ios::trunc);           //config.DBPath
+                uint *key_index = new uint[bench->MemTable_capacity]{0};
+                int finish = 0;
                 clock_t time1,time2;
                 time1 = clock();
-
-                while(k<total_key){
-                    __uint128_t temp_key= MAX_128;
+                while(finish<bench->MemTable_capacity){
+                    finish = 0;
+                    __uint128_t temp_key = (__uint128_t)1<<126;
                     box * temp_box;
                     uint take_id =0;
-                    for(int i=0;i<MemTable_upper_limit;i++){
-                        if(key_index[i]<kv_final[i]){
-                            if(temp_key>=(*(*h_keys)[i])[key_index[i]]){
-                                temp_key = (*(*h_keys)[i])[key_index[i]];
-                                temp_box = (*(*h_values)[i])[key_index[i]];
-                                take_id = i;
-                            }
+                    for(int i=0;i<bench->MemTable_capacity;i++){
+                        if( bench->h_keys[i][key_index[i]] == 0){              //empty kv
+                            finish++;
+                            continue;
+                        }
+                        if( temp_key > bench->h_keys[i][key_index[i]] ){
+                            temp_key = bench->h_keys[i][key_index[i]];
+                            temp_box = &bench->h_box_block[i][bench->h_values[i][key_index[i]]];               //bench->  i find the right 2G, then in box_block[ h_values ]
+                            take_id = i;
+                            bench->h_keys[i][key_index[i]] = 0;                 //init
                         }
                     }
                     key_index[take_id]++;
-                    k++;
                     SSTable.write((char *)&temp_key, sizeof(__uint128_t));
                     SSTable.write((char *) temp_box, sizeof(box));
-                    delete  temp_box;
                 }
 
                 time2 = clock();
@@ -260,13 +257,13 @@ void tracer::process(){
 
                 SSTable.flush();
                 SSTable.close();
-                p << device_time_taken/1000 << endl;
 
                 //init
-                MemTable_count = 0;
-                for(int i=0;i<MemTable_upper_limit;i++){
-                    delete (*h_keys)[i];
-                    delete (*h_values)[i];
+                bench->MemTable_count = 0;
+                for(uint i=0;i<bench->MemTable_capacity;i++){
+                    for(uint j=bench->kv_2G; j<bench->kv_capacity ;j++){
+                        bench->h_keys[i][j] = 0;
+                    }
                 }
             }
 
@@ -287,10 +284,11 @@ void tracer::process(){
 			bench->pro.max_filter_size = max(bench->pro.max_filter_size, bench->filter_list_index);
 			bench->pro.max_bucket_num = max(bench->pro.max_bucket_num, bench->num_taken_buckets);
 			bench->pro.num_pairs += bench->num_active_meetings;
-			bench->pro.num_meetings += bench->meeting_counter;
 
-            if (t != 0 && bench->meeting_counter > 0) {
-                fprintf(stdout,"time=%d meeting_counter=%d\n",st + t,bench->meeting_counter);           // st+t+1
+
+//			bench->pro.num_meetings += bench->meeting_counter;
+//            if (t != 0 && bench->meeting_counter > 0) {
+//                fprintf(stdout,"time=%d meeting_counter=%d\n",st + t,bench->meeting_counter);           // st+t+1
 //                for (int i = 0; i < bench->meeting_counter; i++) {
 //                    //fprintf(stdout,"(%d,%d) %d-%d (%f,%f); ",bench->meetings[i].get_pid1(),bench->meetings[i].get_pid2(),bench->meetings[i].start,bench->meetings[i].end,bench->meetings[i].midpoint.x,bench->meetings[i].midpoint.y);
 //                    fprintf(stdout, "%zu (%f,%f)(%f,%f)|%d-%d;", bench->meetings[i].key,
@@ -298,7 +296,11 @@ void tracer::process(){
 //                            bench->meetings[i].start, bench->meetings[i].end);
 //                }
 //                fprintf(stdout, "\n");
-            }
+//            }
+
+
+
+
 		}
 
 	}

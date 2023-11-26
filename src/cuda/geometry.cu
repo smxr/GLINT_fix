@@ -105,7 +105,7 @@ void cuda_cleargrids(workbench *bench){
 __global__
 void cuda_reset_bench(workbench *bench){
 	bench->grid_check_counter = 0;
-	bench->meeting_counter = 0;
+	//bench->meeting_counter = 0;
 	bench->num_active_meetings = 0;
 	bench->num_taken_buckets = 0;
 	bench->filter_list_index = 0;
@@ -360,7 +360,7 @@ void cuda_refinement(workbench *bench){
 //        Point *p2 = &bench->points[target_pid];
         Point *p1 = bench->points+pid;
         Point *p2 = bench->points+target_pid;
-        double dist = distance(bench->points[pid].x, bench->points[pid].y, bench->points[target_pid].x, bench->points[target_pid].y);
+        double dist = distance(bench->points[pid].x, bench->points[pid].y, bench->points[1].x, bench->points[target_pid].y);
         if(dist<=bench->config->reach_distance){
             uint pid1 = min(pid,target_pid);
             uint pid2 = max(target_pid,pid);
@@ -485,10 +485,10 @@ void cuda_identify_meetings(workbench *bench) {
     if (bench->cur_time - bench->meeting_buckets[bid].start >= bench->config->min_meet_time + 1) {
         for (int k = 0; k < 2; k++) {
             uint meeting_idx = atomicAdd(&bench->kv_count, 1);
-            if (meeting_idx < bench->meeting_capacity) {                        //always true
+            if (meeting_idx < bench->kv_capacity) {                        //always true
                 uint pid, target;
-                pid = bench->meeting_buckets[bid].get_pid1();
-                target = bench->meeting_buckets[bid].get_pid2();
+                pid = getpid1(bench->meeting_buckets[bid].key);
+                target = getpid2(bench->meeting_buckets[bid].key);
                 if(k==1){
                     uint swap = pid;
                     pid = target;
@@ -501,10 +501,10 @@ void cuda_identify_meetings(workbench *bench) {
 
                 bench->d_keys[meeting_idx] = bench->meeting_buckets[bid].end + bench->meeting_buckets[bid].start * 10000000 + target * 10000000 * 10000000 +
                                              pid * 10000000 * 10000000 * 10000000;
-                bench->d_values[meeting_idx].low[0] = bench->meeting_buckets[bid].mbr.low[0];
-                bench->d_values[meeting_idx].low[1] = bench->meeting_buckets[bid].mbr.low[1];
-                bench->d_values[meeting_idx].high[0] = bench->meeting_buckets[bid].mbr.high[0];
-                bench->d_values[meeting_idx].high[1] = bench->meeting_buckets[bid].mbr.high[1];
+                bench->d_box_block[meeting_idx].low[0] = bench->meeting_buckets[bid].mbr.low[0];
+                bench->d_box_block[meeting_idx].low[1] = bench->meeting_buckets[bid].mbr.low[1];
+                bench->d_box_block[meeting_idx].high[0] = bench->meeting_buckets[bid].mbr.high[0];
+                bench->d_box_block[meeting_idx].high[1] = bench->meeting_buckets[bid].mbr.high[1];
             }
             // reset the bucket
             bench->meeting_buckets[bid].key = ULL_MAX;
@@ -836,7 +836,10 @@ workbench *cuda_create_device_bench(workbench *bench, gpu_info *gpu){
 
     //cuda sort
     h_bench.d_keys = (__uint128_t *)gpu->allocate(bench->kv_capacity*sizeof(__uint128_t));
-    h_bench.d_values = (box *)gpu->allocate(bench->kv_capacity*sizeof(box));
+    h_bench.d_values = (uint *)gpu->allocate(bench->kv_capacity*sizeof(uint));
+    h_bench.d_box_block = (box *)gpu->allocate(bench->kv_capacity*sizeof(box));
+    thrust::device_ptr<uint> d_vector_values = thrust::device_pointer_cast(h_bench.d_values);
+    thrust::sequence(d_vector_values,d_vector_values+bench->kv_capacity);                                           //init 0 1 2 ...
     CUDA_SAFE_CALL(cudaMemcpy(h_bench.schema, bench->schema, bench->schema_stack_capacity*sizeof(QTSchema), cudaMemcpyHostToDevice));
     CUDA_SAFE_CALL(cudaMemcpy(h_bench.schema, bench->schema, bench->schema_stack_capacity*sizeof(QTSchema), cudaMemcpyHostToDevice));
 
@@ -992,44 +995,33 @@ void process_with_gpu(workbench *bench, workbench* d_bench, gpu_info *gpu){
 	bench->num_active_meetings = h_bench.num_active_meetings;
 	bench->num_taken_buckets = h_bench.num_taken_buckets;
     //bench->kv_count = h_bench.kv_count;
-	logt("meeting identify: %d taken %d active %d new meetings found", start, h_bench.num_taken_buckets, h_bench.num_active_meetings, h_bench.meeting_counter);
+	//logt("meeting identify: %d taken %d active %d new meetings found", start, h_bench.num_taken_buckets, h_bench.num_active_meetings, h_bench.meeting_counter);
 
     //4.5 cuda sort
     if(bench->kv_count>bench->kv_2G){
         // wrap raw pointer with a device_ptr
         thrust::device_ptr<__uint128_t> d_vector_keys = thrust::device_pointer_cast(h_bench.d_keys);
-        thrust::device_ptr<box> d_vector_values = thrust::device_pointer_cast(h_bench.d_values);
+        thrust::device_ptr<uint> d_vector_values = thrust::device_pointer_cast(h_bench.d_values);
         // use device_ptr in Thrust algorithms
-        thrust::sort_by_key(d_vector_keys.begin(), d_vector_keys.begin() + h_bench.kv_count, d_vector_values.begin());
+        thrust::sort_by_key(d_vector_keys, d_vector_keys + h_bench.kv_count, d_vector_values);
         // access device memory transparently through device_ptr
         //dev_ptr[0] = 1;
         check_execution();
         cudaDeviceSynchronize();
         cudaMemcpy(&h_bench, d_bench, sizeof(workbench), cudaMemcpyDeviceToHost);
         bench->pro.cuda_sort_time = get_time_elapsed(start,false);
-        thrust::copy(d_vector_keys.begin(), d_vector_keys.begin()+bench->kv_count, bench->h_keys[bench->MemTable_count].begin());
-        thrust::copy(d_vector_values.begin(), d_vector_values.begin()+bench->kv_count, bench->h_values[bench->MemTable_count].begin());
+        logt("cuda_sort_time: ",start);
+        cudaMemcpy(h_bench.h_box_block[bench->MemTable_count], h_bench.d_box_block, bench->kv_count*sizeof(box), cudaMemcpyDeviceToHost);
+        thrust::copy(d_vector_keys, d_vector_keys+bench->kv_count, bench->h_keys[bench->MemTable_count]);
+        thrust::copy(d_vector_values, d_vector_values+bench->kv_count, bench->h_values[bench->MemTable_count]);
         bench->MemTable_count++;
 
         //init
+        thrust::sequence(d_vector_values,d_vector_values+bench->kv_capacity);
         h_bench.kv_count = 0;
-        //since box is updated rather than new
-        cudaFree(h_bench.d_box_block);
-        cudaMalloc((void **)&h_bench.d_box_block, bench->kv_capacity*sizeof(box));
-        cudaMemcpy(d_bench, &h_bench, sizeof(workbench), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_bench, &h_bench, sizeof(workbench), cudaMemcpyHostToDevice);                       //update kv_count other effect ???
 
     }
-
-    if(t==bench->config->cur_duration-1){
-        bench->kv_count = h_bench.kv_count;
-        bench->d_keys = h_bench.d_keys;
-        bench->d_values = h_bench.d_values;
-        bench->d_box_block = h_bench.d_box_block;
-    }
-    if(bench->cur_time == bench->config->start_time + bench->config->duration){             //finish
-        cudaFree(bench->meeting_buckets);
-    }
-
 
 	// todo do the data analyzes, for test only, should not copy out so much stuff
 	if(bench->config->analyze_grid||bench->config->analyze_reach||bench->config->profile){
