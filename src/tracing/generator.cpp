@@ -296,7 +296,6 @@ void *gentrace_unit(void *arg){
         }
         for(int obj=start;obj<end;obj++){
             //log("%d",obj);
-
             vector<Point *> trace = gen->fill_trace(mymap, obj);
             // copy to target
             for(int i=0;i<gen->config->cur_duration;i++){

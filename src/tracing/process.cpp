@@ -22,7 +22,7 @@ tracer::tracer(configuration *conf, box &b, Point *t, trace_generator *gen){
 	mbr = b;
 	config = conf;
 	part = new partitioner(mbr,config);
-
+    generator = gen;
 #ifdef USE_GPU
 	if(config->gpu){
 		vector<gpu_info *> gpus = get_gpus();

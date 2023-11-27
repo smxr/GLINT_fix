@@ -51,7 +51,7 @@ vector<gpu_info *> get_gpus(){
 	cudaGetDeviceCount(&num_gpus);
 	for (int i = 0; i < num_gpus; i++) {
 		cudaDeviceProp prop;
-		cudaGetDeviceProperties(&prop, i);
+		//cudaGetDeviceProperties(&prop, i);
 		gpu_info *info = new gpu_info();
 		strcpy(info->name, prop.name);
 		info->busy = false;
