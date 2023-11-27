@@ -189,7 +189,8 @@ void process_with_gpu(workbench *bench,workbench *d_bench, gpu_info *gpu);
 void tracer::process(){
 	struct timeval start = get_cur_time();
 	for(int st=config->start_time;st<config->start_time+config->duration;st+=100){
-		int cur_duration = min((config->start_time+config->duration-st),(uint)100);
+		//int cur_duration = min((config->start_time+config->duration-st),(uint)100);
+        config->cur_duration = min((config->start_time+config->duration-st),(uint)100);
         generator->generate_trace(trace);
 		start = get_cur_time();
 		if(!bench){
@@ -201,7 +202,7 @@ void tracer::process(){
 			}
 #endif
 		}
-		for(int t=0;t<cur_duration;t++){
+		for(int t=0;t<config->cur_duration;t++){
 			log("");
 			bench->reset();
 			bench->points = trace+t*config->num_objects;
